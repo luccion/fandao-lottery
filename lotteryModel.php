@@ -17,7 +17,7 @@
                 }
                 return ($a > $b) ? 1 : -1;
             }
-            function emoji_calc($array)
+            function emoji_calculate($array)
             {
                 $num = [0, 1, 2, 3, 4, 5, 6, 7, 8];
                 $slot = ['🍟' => 0, '🍕' => 0, '🥑' => 0, '🍭' => 0, '🍺' => 0, '🍉' => 0, '🥐' => 0, '🍙' => 0, '🍦' => 0];
@@ -41,9 +41,15 @@
             $arr['none'] = 0;
             $arr['once'] = 0;
             $arr['twice'] = 0;
-            $arr['thirdTimes'] = 0;
+            $arr['threeTimes'] = 0;
             $arr['fourTimes'] = 0;
             $arr['fullHouse'] = 0;
+            $need = 0; //需要池
+            $loot = array(); //结算池
+            $loot['prize0'] = 0;
+            $loot['prize1'] = 0;
+            $loot['prize2'] = 0;
+            $loot['prize3'] = 0;
             $lotteryStr = "";
             $lotteryArray = array();
             $slot = [0, 0, 0, 0, 0, 0, 0, 0, 0];
@@ -56,28 +62,28 @@
                 $lotteryStr .= $emoji[$p];
                 $lotteryArray[$i - 1] = $emoji[$p];
             }
-            $lotteryCalc = emoji_calc($lotteryArray);
+            $lotteryCalc = emoji_calculate($lotteryArray);
             for ($i = 1; $i <= 4; $i++) {
-                $lottery["num" . $i] = $lotteryArray[$i - 1];                //制造lottery数组用于最后加入数据库
+                $lottery["num" . $i] = $lotteryArray[$i - 1];                      //制造lottery数组用于最后加入数据库
             }
 
             /* 获取全部彩票 */
             $sql = 'select * from lottery_tickets';
-            $all = $this->db->get_all($sql);
+            $all = $this->db->getAll($sql);
 
             foreach ($all as $one) {
-                $ticketArray = array();                                      //删除$one数组中的用户id等
+                $ticketArray = array();                                            //删除$one数组中的用户id等
                 for ($c = 0; $c < $rows; $c++) {
                     $ticketArray['num' . ($c + 1)] = $one['num' . ($c + 1)];
                 }
-                $ticketStr = implode("", $ticketArray);                      //获取字符串如"🍟🍟🍟🍟"
-                $ticketCalc = emoji_calc($ticketArray);                      //获取calc   
+                $ticketStr = implode("", $ticketArray);                           //获取字符串如"🍟🍟🍟🍟"
+                $ticketCalc = emoji_calculate($ticketArray);                      //获取calc   
 
-                if ($ticketStr === $lotteryStr) {                            //特等奖！
+                if ($ticketStr === $lotteryStr) {                                 //特等奖！
                     $block = array('u' => $one['uid'], 'c' => $ticketStr, 'p' => 0);
                     array_push($winner, $block);
                     $arr['fullHouse']++;
-                } else {                                                     //其他奖
+                } else {                                                          //其他奖
                     $time = 0;
                     for ($i = 0; $i < 9; $i++) {
                         if ($ticketCalc[$i] <= $lotteryCalc[$i]) {
@@ -102,7 +108,7 @@
                     case 3:     //二等奖
                         $block = array('u' => $one['uid'], 'c' => $ticketStr, 'p' => 2);
                         array_push($winner, $block);
-                        $arr['thirdTimes']++;
+                        $arr['threeTimes']++;
                         break;
                     case 4:     //一等奖
                         $block = array('u' => $one['uid'], 'c' => $ticketStr, 'p' => 1);
@@ -112,18 +118,65 @@
                 }
             }
 
+            if ($arr['fullHouse'] != 0) {
+                if (($pool * $p0_rate / $arr['fullHouse']) <= $p0 || $pool == 0) {
+                    $need += abs($pool - ($arr['fullHouse'] * $p0));
+                    $loot['prize0'] = $arr['fullHouse'] * $p0;
+                    $pool -= $loot['prize0'];
+                } else {
+                    $loot['prize0'] = $pool *  $p0_rate;
+                    $pool -= $loot['prize0'];
+                }
+                if ($pool <= 0) {
+                    $pool = 0;
+                }
+            }
+            if ($arr['fourTimes'] != 0) {
+                if (($pool * $p1_rate / $arr['fourTimes']) <= $p1 || $pool == 0) {
+                    $need += abs($pool - ($arr['fourTimes'] * $p1));
+                    $loot['prize1'] = $arr['fourTimes'] * $p1;
+                    $pool -= $loot['prize1'];
+                } else {
+                    $loot['prize1'] = $pool * $p1_rate;
+                    $pool -= $loot['prize1'];
+                }
+                if ($pool <= 0) {
+                    $pool = 0;
+                }
+            }
+            if ($arr['threeTimes'] != 0) {
+                if ($arr['threeTimes'] * $p3 > $pool) {
+                    $need += abs($pool - ($arr['threeTimes'] * $p2));
+                } else {
+                    $loot['prize2'] = $arr['threeTimes'] * $p2;
+                    $pool -= $loot['prize2'];
+                }
+                if ($pool <= 0) {
+                    $pool = 0;
+                }
+            }
+            if ($arr['twice'] != 0) {
+                if ($arr['twice'] * $p3 > $pool) {
+                    $need += abs($pool - ($arr['twice'] * $p3));
+                } else {
+                    $loot['prize3'] = $arr['twice'] * $p3;
+                    $pool -= $loot['prize3'];
+                }
+            }
 
-            /* 汇款开始 */
+            if ($need) {
+                $this->issueTo(115, $need, "lottery");
+            }
 
-            $temp_p0 = array();     //特等奖临时数组，缓冲用
-            $temp_p1 = array();     //一等奖临时数组，缓冲用
-            foreach ($winner as $s) {   //汇款不会冲突，因为小奖由fandao补贴
+            foreach ($winner as $s) {
                 switch ($s['p']) {
-                    case 0:             //特等奖 200
-                        array_push($temp_p0, $s['u']);
+                    case 0:            //特等奖 200     
+                        $prize0 = $loot['prize0'] / $arr['fullHouse'];
+                        $this->lottery_issueTo($s['u'], $prize0, "lottery@0");
                         break;
                     case 1:             //一等奖 100
-                        array_push($temp_p1, $s['u']);
+                        $prize1 = $loot['prize1'] / $arr['fourTimes'];
+                        $this->lottery_issueTo($s['u'], $prize1, "lottery@1");
                         break;
                     case 2:             //二等奖 3                     
                         $this->lottery_issueTo($s['u'], $p2, "lottery@2");
@@ -133,53 +186,26 @@
                         break;
                 }
             }
-            /* 汇款给特等奖 */
-            $prize_full = ceil($p0_rate * $pool);
-            $prize_full_limit = $arr['fullHouse'] * $p0;
-            $prize_full_each = ceil(($p0_rate * $pool / $arr['fullHouse'])) >= $p0 ?: $p0;
-            if ($prize_full < $prize_full_limit) {
-                $need = $prize_full_limit - $prize_full;
-                $this->issueTo(115, $need, "lottery");              //计算出该奖总共要给出的金额，少了的数额由fandao支付          
-            }
-            foreach ($temp_p0 as $t) {
-                $this->lottery_issueTo(
-                    $t['u'],
-                    $prize_full_each,
-                    "lottery@0"
-                );
+            if ($pool < 500) {
+                $target = 500 - $pool;
+                $this->issueTo(115, $target, "lottery");
             }
 
-            $pool = $this->calc_amount('lottery');                  //更新pool数额
-
-            /* 汇款给一等奖 */
-            $prize_full = ceil($p1_rate * $pool);
-            $prize_full_limit = $arr['fourTimes'] * $p1;
-            $prize_full_each = ceil(($p1_rate * $pool / $arr['fourTimes'])) >= $p1 ?: $p1;
-            if ($prize_full < $prize_full_limit) {
-                $need = $prize_full_limit - $prize_full;
-                $this->issueTo(115, $need, "lottery");              //计算出该奖总共要给出的金额，少了的数额由fandao支付          
-            }
-            foreach ($temp_p0 as $t) {
-                $this->lottery_issueTo(
-                    $t['u'],
-                    $prize_full_each,
-                    "lottery@1"
-                );
-            }
             /* 汇款结束 */
             $lottery['winner'] = serialize($winner);
             /* 统计 */
             $rate[0] = 100 * $arr['none'] / array_sum($arr) . '%';
             $rate[1] = 100 * $arr['once'] / array_sum($arr) . '%';
             $rate[2] = 100 * $arr['twice'] / array_sum($arr) . '%';
-            $rate[3] = 100 *  $arr['thirdTimes'] / array_sum($arr) . '%';
+            $rate[3] = 100 *  $arr['threeTimes'] / array_sum($arr) . '%';
             $rate[4] = 100 *  $arr['fourTimes'] / array_sum($arr) . '%';
             $rate['fullHouse'] = 100 *   $arr['fullHouse'] / array_sum($arr) . '%';
             $lottery['summary'] = implode("|", $rate);
             $lottery['time'] = time();
             $lottery['count'] = $this->count_tickets();
-            return $this->db->auto_execute($this->lot, $lottery); //将数组写入数据库
+            return $this->db->autoExecute($this->lot, $lottery);
         }
+
 
         /* 下略 */
         protected $lot = "lottery";
